@@ -1,0 +1,33 @@
+syntax = "proto3";
+
+package zhukov;
+
+message SimpleMessage {
+    int32 myNumber = 1;
+    string myString = 2;
+}
+
+message MessageWithSeq {
+    string myString = 1;
+    repeated int32 myInts = 2;
+}
+
+message MessageWithRepeatedString {
+    int32 myInt = 1;
+    repeated string myStrings = 2;
+}
+
+message Lit {
+  int32 value = 1;
+}
+
+message Add {
+    Expr lhs = 1;
+    Expr rhs = 2;
+}
+message Expr {
+    oneof value {
+        Lit lit = 1;
+        Add add = 2;
+    }
+}
