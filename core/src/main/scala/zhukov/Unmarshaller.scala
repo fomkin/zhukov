@@ -2,7 +2,7 @@ package zhukov
 
 import zhukov.protobuf.CodedInputStream
 
-sealed trait Unmarshaller[A] {
+trait Unmarshaller[A] {
 
   def read(stream: CodedInputStream): A
 
@@ -15,8 +15,12 @@ sealed trait Unmarshaller[A] {
 
 object Unmarshaller {
 
-  trait LengthDelimitedUnmarshaller[A] extends Unmarshaller[A] { self =>
-    def map[B](f: A => B): LengthDelimitedUnmarshaller[B] =
+  /**
+    * For length-delimited unmarshaller with
+    * length-reading defined inside CodedInputStream.
+    */
+  trait CodedUnmarshaller[A] extends Unmarshaller[A] { self =>
+    def map[B](f: A => B): CodedUnmarshaller[B] =
       (stream: CodedInputStream) => f(self.read(stream))
   }
 
@@ -40,5 +44,5 @@ object Unmarshaller {
 
   implicit val int: VarintUnmarshaller[Int] = _.readRawVarint32()
   implicit val long: VarintUnmarshaller[Long] = _.readRawVarint64()
-  implicit val string: LengthDelimitedUnmarshaller[String] = _.readString()
+  implicit val string: CodedUnmarshaller[String] = _.readString()
 }

@@ -1,6 +1,6 @@
 import utest._
 import zhukov.Unmarshaller
-import zhukov.messages.{MessageWithRepeatedString, MessageWithSeq, SimpleMessage}
+import zhukov.messages._
 import zhukov.derivation.unmarshaller
 
 object CompareWithScalapbTest extends TestSuite {
@@ -25,6 +25,21 @@ object CompareWithScalapbTest extends TestSuite {
   object MessageWithRepeatedString2 {
     implicit val u: Unmarshaller[MessageWithRepeatedString2] =
       unmarshaller[MessageWithRepeatedString2]
+  }
+
+  sealed trait Expr2
+
+  object Expr2 {
+    //case object Dummy extends Expr2
+    case class Lit2(value: Int = 0) extends Expr2
+    case class Add2(lhs: Expr2 = Lit2(), rhs: Expr2 = Lit2()) extends Expr2
+
+    implicit val u1: Unmarshaller[Lit2] =
+      unmarshaller[Lit2]
+    implicit val u2: Unmarshaller[Add2] =
+      unmarshaller[Add2]
+    implicit val u3: Unmarshaller[Expr2] =
+      unmarshaller[Expr2]
   }
 
   val tests = Tests {
@@ -76,6 +91,13 @@ object CompareWithScalapbTest extends TestSuite {
           message.myInt == message2.myInt,
           message.myStrings == message2.myStrings
         )
+      }
+      "Expr" - {
+        val l = Expr(Expr.Value.Lit(Lit(2)))
+        val r = Expr(Expr.Value.Lit(Lit(4)))
+        val message = Expr(Expr.Value.Add(Add(Some(l), Some(r))))
+        val message2 = Unmarshaller[Expr2].read(message.toByteArray)
+        assert(message2 == Expr2.Add2(Expr2.Lit2(2), Expr2.Lit2(4)))
       }
     }
   }
