@@ -3,6 +3,7 @@ package zhukov.protobuf
 import java.io.IOException
 import java.io.OutputStream
 import java.nio.ByteBuffer
+import java.nio.charset.StandardCharsets
 
 import CodedOutputStream._
 import zhukov.Bytes
@@ -148,7 +149,7 @@ object CodedOutputStream {
   def computeBoolSizeNoTag(value: Boolean): Int = 1
 
   def computeStringSizeNoTag(value: String): Int = {
-    val bytes = value.getBytes(Internal.UTF_8)
+    val bytes = value.getBytes(StandardCharsets.UTF_8)
     computeRawVarint32Size(bytes.length) + bytes.length
   }
 
@@ -389,7 +390,7 @@ class CodedOutputStream (output: OutputStream, buffer: Array[Byte]) {
   }
 
   def writeStringNoTag(value: String): Unit = {
-    val bytes = value.getBytes(Internal.UTF_8)
+    val bytes = value.getBytes(StandardCharsets.UTF_8)
     writeRawVarint32(bytes.length)
     writeRawBytes(bytes)
   }
