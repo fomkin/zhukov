@@ -3,6 +3,7 @@ package zhukov.derivation
 import macrocompat.bundle
 import zhukov.protobuf.{CodedOutputStream, WireFormat}
 
+import scala.collection.concurrent.TrieMap
 import scala.language.experimental.macros
 import scala.reflect.macros.blackbox
 
@@ -11,41 +12,59 @@ class ZhukovDerivationMacro(val c: blackbox.Context) {
 
   import c.universe._
 
+  private val marshallerCache = TrieMap.empty[Type, Tree]
+  private val unmarshallerCache = TrieMap.empty[Type, Tree]
+  private val sizeMeterCache = TrieMap.empty[Type, Tree]
+
   def unmarshallerImpl[T: WeakTypeTag]: Tree = {
     val T = weakTypeTag[T].tpe
     val ts = T.typeSymbol
-    if (ts.isClass && ts.asClass.isCaseClass) {
-      val companion = ts.companion
-      caseClassUnmarshaller(T, companion)
-    } else if (ts.isClass && ts.asClass.isTrait && ts.asClass.isSealed) {
-      sealedTraitUnmarshaller(T, ts.asClass)
-    }
-    else c.abort(c.enclosingPosition, OnlyCaseClassesAndSealedTraitsSupported)
+    lazy val tree =
+      if (ts.isClass && ts.asClass.isCaseClass) {
+        val companion = ts.companion
+        caseClassUnmarshaller(T, companion)
+      } else if (ts.isClass && ts.asClass.isTrait && ts.asClass.isSealed) {
+        sealedTraitUnmarshaller(T, ts.asClass)
+      } else {
+        c.abort(c.enclosingPosition, OnlyCaseClassesAndSealedTraitsSupported)
+      }
+    unmarshallerCache.getOrElseUpdate(T, tree)
   }
 
   def marshallerImpl[T: WeakTypeTag]: Tree = {
     val T = weakTypeTag[T].tpe
     val ts = T.typeSymbol
-    if (ts.isClass && ts.asClass.isCaseClass) {
-      val companion = ts.companion
-      caseClassMarshaller(T, companion)
-    } else if (ts.isClass && ts.asClass.isTrait && ts.asClass.isSealed) {
-      sealedTraitMarshaller(T, ts.asClass)
-    }
-    else c.abort(c.enclosingPosition, OnlyCaseClassesAndSealedTraitsSupported)
+    lazy val tree =
+      if (ts.isClass && ts.asClass.isCaseClass) {
+        val companion = ts.companion
+        caseClassMarshaller(T, companion)
+      } else if (ts.isClass && ts.asClass.isTrait && ts.asClass.isSealed) {
+        sealedTraitMarshaller(T, ts.asClass)
+      } else c.abort(c.enclosingPosition, OnlyCaseClassesAndSealedTraitsSupported)
+    marshallerCache.getOrElseUpdate(T, tree)
   }
 
   def sizeMeterImpl[T: WeakTypeTag]: Tree = {
     val T = weakTypeTag[T].tpe
     val ts = T.typeSymbol
-    if (ts.isClass && ts.asClass.isCaseClass) {
-      val companion = ts.companion
-      caseClassSizeMeter(T, companion)
-    } else if (ts.isClass && ts.asClass.isTrait && ts.asClass.isSealed) {
-      sealedTraitSizeMeter(T, ts.asClass)
-    }
-    else c.abort(c.enclosingPosition, OnlyCaseClassesAndSealedTraitsSupported)
+    lazy val tree =
+      if (ts.isClass && ts.asClass.isCaseClass) {
+        val companion = ts.companion
+        caseClassSizeMeter(T, companion)
+      } else if (ts.isClass && ts.asClass.isTrait && ts.asClass.isSealed) {
+        sealedTraitSizeMeter(T, ts.asClass)
+      } else c.abort(c.enclosingPosition, OnlyCaseClassesAndSealedTraitsSupported)
+    sizeMeterCache.getOrElseUpdate(T, tree)
   }
+
+  def unmarshallerLowPriorityImpl[T: WeakTypeTag]: Tree =
+    q"zhukov.derivation.LowPriority(${unmarshallerImpl[T]})"
+
+  def marshallerLowPriorityImpl[T: WeakTypeTag]: Tree =
+    q"zhukov.derivation.LowPriority(${marshallerImpl[T]})"
+
+  def sizeMeterLowPriorityImpl[T: WeakTypeTag]: Tree =
+    q"zhukov.derivation.LowPriority(${sizeMeterImpl[T]})"
 
   private def caseClassMarshaller(T: Type, module: Symbol) = {
     val fields = resolveCaseClassFields(module)
@@ -84,15 +103,13 @@ class ZhukovDerivationMacro(val c: blackbox.Context) {
   private def sealedTraitSizeMeter(T: Type, ts: ClassSymbol): Tree = {
     val fields = resolveSealedTraitFields(T, ts)
     val meters = fields.map(x => cq"_v: ${x.tpe} => ${commonSizeMeter(x)}")
-    val xx = q"""
+    q"""
       zhukov.SizeMeter[$T] { (_value: $T) =>
         var _size = 0
         _value match { case ..$meters }
         _size
       }
     """
-    //println(xx)
-    xx
   }
 
   private def resolveSealedTraitFields(T: Type, ts: ClassSymbol) = {
@@ -181,9 +198,7 @@ class ZhukovDerivationMacro(val c: blackbox.Context) {
             _size += implicitly[zhukov.SizeMeter[$tpe]].measure($name)
           """
       }
-    case xx =>
-      println("unhandled")
-      println(xx)
+    case _ =>
       EmptyTree
   }
 
