@@ -31,4 +31,5 @@ object SizeMeter {
   implicit val boolean: SizeMeter[Boolean] = SizeMeter(CodedOutputStream.computeBoolSizeNoTag _)
   implicit val string: SizeMeter[String] = SizeMeter(CodedOutputStream.computeStringSizeNoTag _)
   implicit def bytes[B](implicit bytes: Bytes[B]): SizeMeter[B] = SizeMeter(value => bytes.size(value).toInt)
+  implicit def option[T](implicit sm: SizeMeter[T]): SizeMeter[Option[T]] = SizeMeter(xs => sm.measureValues(xs))
 }

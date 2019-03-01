@@ -18,6 +18,15 @@ object CompareWithScalapbTest extends TestSuite {
       marshaller[SimpleMessage2]
   }
 
+  case class SimpleMessage3(myNumber: Int = 0, myString: Option[String] = None)
+
+  object SimpleMessage3 {
+    implicit val u: Unmarshaller[SimpleMessage3] =
+      unmarshaller[SimpleMessage3]
+    implicit val m: Marshaller[SimpleMessage3] =
+      marshaller[SimpleMessage3]
+  }
+
   case class MessageWithSeq2(myString: String = "", myInts: Seq[Int] = Seq())
 
   object MessageWithSeq2 {
@@ -138,6 +147,14 @@ object CompareWithScalapbTest extends TestSuite {
           message.myString == message2.myString
         )
       }
+      "SimpleMessage with non-empty option" - {
+        val message = new SimpleMessage(42, "cow")
+        val message2 = Unmarshaller[SimpleMessage3].read(message.toByteArray)
+        assert(
+          message.myNumber == message2.myNumber,
+          message2.myString.contains(message.myString)
+        )
+      }
       'WithBytes - {
         val message = WithBytes(ByteString.copyFromUtf8("cow"), 42L)
         val message2 = Unmarshaller[WithBytes2].read(message.toByteArray)
@@ -220,6 +237,22 @@ object CompareWithScalapbTest extends TestSuite {
           message.myString == message2.myString
         )
       }
+      "SimpleMessage with non-empty option" - {
+        val message2 = new SimpleMessage3(42, Some("cow"))
+        val message = SimpleMessage.parseFrom(Marshaller[SimpleMessage3].write(message2))
+        assert(
+          message.myNumber == message2.myNumber,
+          message2.myString.contains(message.myString)
+        )
+      }
+      "SimpleMessage with empty option" - {
+        val message2 = new SimpleMessage3(42, None)
+        val message = SimpleMessage.parseFrom(Marshaller[SimpleMessage3].write(message2))
+        assert(
+          message.myNumber == message2.myNumber,
+          message.myString == ""
+        )
+      }
       'WithBytes - {
         val message2 = WithBytes2("cow".getBytes(StandardCharsets.UTF_8), 42L)
         val message = WithBytes.parseFrom(Marshaller[WithBytes2].write(message2))
@@ -286,7 +319,7 @@ object CompareWithScalapbTest extends TestSuite {
         })
       }
       "OtherTypes" - {
-        val message2 = OtherTypes2(523f, 621d, b = false)
+        val message2 = OtherTypes2(523f, 621d, b = true)
         val message = OtherTypes.parseFrom(Marshaller[OtherTypes2].write(message2))
         assert(
           message.f == message2.f,

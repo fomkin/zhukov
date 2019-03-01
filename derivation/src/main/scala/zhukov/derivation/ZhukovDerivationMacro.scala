@@ -107,7 +107,8 @@ class ZhukovDerivationMacro(val c: blackbox.Context) {
           default = None,
           tpe = x.asClass.toType,
           repTpe = None,
-          parentType = Some(T)
+          baseSealedTrait = Some(T),
+          isOption = false
         )
     }
   }
@@ -134,7 +135,7 @@ class ZhukovDerivationMacro(val c: blackbox.Context) {
   }
 
   private def commonSizeMeter(x: Field): Tree = x match {
-    case Field(i, nameOpt, _, _, _, Some(tpe), _) =>
+    case Field(i, nameOpt, _, _, _, Some(tpe), _, _) =>
       val name = nameOpt.fold[Tree](Ident(TermName("_v")))(s => q"_value.$s")
       inferMarshallerWireType(tpe) match {
         case VarInt | Fixed32 | Fixed64 => // Packed
@@ -164,7 +165,7 @@ class ZhukovDerivationMacro(val c: blackbox.Context) {
               }
             """
       }
-    case Field(i, nameOpt, _, _, tpe, _, _) =>
+    case Field(i, nameOpt, _, _, tpe, _, _, _) =>
       val name = nameOpt.fold[Tree](Ident(TermName("_v")))(s => q"_value.$s")
       inferMarshallerWireType(tpe) match {
         case LengthDelimited =>
@@ -187,7 +188,7 @@ class ZhukovDerivationMacro(val c: blackbox.Context) {
   }
 
   private def commonMarshaller(T: Type, x: Field): Tree = x match {
-    case Field(i, nameOpt, _, _, _, Some(tpe), _) =>
+    case Field(i, nameOpt, _, _, _, Some(tpe), _, false) =>
       val name = nameOpt.fold[Tree](Ident(TermName("_v")))(s => q"_value.$s")
       inferMarshallerWireType(tpe) match {
         case VarInt | Fixed32 | Fixed64 => // Packed
@@ -217,9 +218,8 @@ class ZhukovDerivationMacro(val c: blackbox.Context) {
             }
           """
       }
-    case Field(i, nameOpt, _, _, tpe, _, _) =>
-      val name = nameOpt.fold[Tree](Ident(TermName("_v")))(s => q"_value.$s")
-      inferMarshallerWireType(tpe) match {
+    case Field(i, nameOpt, _, _, tpe, maybeRepTpe, _, isOption) =>
+      def writer(tpe: Type, name: Tree) = inferMarshallerWireType(tpe) match {
         case LengthDelimited =>
           q"""
             _stream.writeTag($i, ${WireFormat.WIRETYPE_LENGTH_DELIMITED})
@@ -232,16 +232,27 @@ class ZhukovDerivationMacro(val c: blackbox.Context) {
             implicitly[zhukov.Marshaller[$tpe]].write(_stream, $name)
           """
       }
+      val name = nameOpt.fold[Tree](Ident(TermName("_v")))(s => q"_value.$s")
+      if (isOption) {
+        q"""
+          $name match {
+            case Some(__extracted) => ${writer(maybeRepTpe.get, Ident(TermName("__extracted")))}
+            case None => ()
+          }
+        """
+      } else writer(tpe, name)
     case _ => EmptyTree
   }
 
   private def commonUnmarshaller(T: Type, fields: List[Field]): Tree = {
     val vars = fields.groupBy(_.varName).mapValues(_.head).collect {
-      case (name, Field(_, _, _, Some(default), repTpe, Some(tpe), None)) =>
+      case (name, Field(_, _, _, Some(default), repTpe, Some(tpe), None, false)) =>
         q"var $name = ${repTpe.typeSymbol.companion}.newBuilder[$tpe] ++= $default"
-      case (name, Field(_, _, _, Some(default), _, None, None)) =>
+      case (name, Field(_, _, _, Some(default), repTpe, Some(_), None, true)) =>
+        q"var $name:$repTpe = $default"
+      case (name, Field(_, _, _, Some(default), _, None, None, _)) =>
         q"var $name = $default"
-      case (name, Field(_, _, _, None, _, None, Some(parent))) =>
+      case (name, Field(_, _, _, None, _, None, Some(parent), _)) =>
         q"var $name:$parent = null"
     }
     val cases = fields.flatMap { x =>
@@ -249,7 +260,10 @@ class ZhukovDerivationMacro(val c: blackbox.Context) {
       val wireType = inferUnmarshallerWireType(tpe)
       val tag = WireFormat.makeTag(x.index, wireType.value)
       val singleRead = q"implicitly[zhukov.Unmarshaller[$tpe]].read(_stream)"
-      if (x.repTpe.isEmpty) {
+      if (x.repTpe.isEmpty || x.isOption) {
+        val read =
+          if (x.isOption) q"Some($singleRead)"
+          else singleRead
         wireType match {
           case LengthDelimited =>
             List(
@@ -257,13 +271,13 @@ class ZhukovDerivationMacro(val c: blackbox.Context) {
                 $tag =>
                   val _length = _stream.readRawVarint32()
                   val _oldLimit = _stream.pushLimit(_length)
-                  ${x.varName} = $singleRead
+                  ${x.varName} = $read
                   _stream.checkLastTagWas(0)
                   _stream.popLimit(_oldLimit)
               """
             )
           case _ =>
-            List(cq"$tag => ${x.varName} = $singleRead")
+            List(cq"$tag => ${x.varName} = $read")
         }
       } else {
         wireType match {
@@ -334,9 +348,10 @@ class ZhukovDerivationMacro(val c: blackbox.Context) {
           default = Some(q"$module.$defaultValue"),
           tpe = tpe,
           repTpe =
-            if (tpe <:< typeOf[Iterable[_]]) Some(tpe.typeArgs.head)
+            if (tpe <:< typeOf[Iterable[_]] || tpe <:< typeOf[Option[_]]) Some(tpe.typeArgs.head)
             else None,
-          parentType = None
+          baseSealedTrait = None,
+          isOption = tpe <:< typeOf[Option[_]]
         )
     }
   }
@@ -344,9 +359,11 @@ class ZhukovDerivationMacro(val c: blackbox.Context) {
   private def caseClassUnmarshaller(T: Type, module: Symbol): Tree = {
     val fields = resolveCaseClassFields(module)
     val applyArgs = fields.collect {
-      case Field(_, Some(originalName), varName, _, _, Some(_), _) =>
+      case Field(_, Some(originalName), varName, _, _, Some(_), _, false) =>
         q"$originalName = $varName.result()"
-      case Field(_, Some(originalName), varName, _, _, None, _) =>
+      case Field(_, Some(originalName), varName, _, _, None, _, false) =>
+        q"$originalName = $varName"
+      case Field(_, Some(originalName), varName, _, _, _, _, true) =>
         q"$originalName = $varName"
     }
     q"""
@@ -380,6 +397,7 @@ class ZhukovDerivationMacro(val c: blackbox.Context) {
                                  default: Option[Tree],
                                  tpe: Type,
                                  repTpe: Option[Type],
-                                 parentType: Option[Type])
+                                 baseSealedTrait: Option[Type],
+                                 isOption: Boolean)
 
 }
