@@ -1,6 +1,7 @@
 package zhukov
 
 import zhukov.protobuf.CodedOutputStream
+import zhukov.protobuf.CodedOutputStream.{LITTLE_ENDIAN_32_SIZE, LITTLE_ENDIAN_64_SIZE}
 
 sealed trait SizeMeter[T] {
 
@@ -23,10 +24,11 @@ object SizeMeter {
     def measure(value: T): Int = f(value)
   }
 
-  implicit val int: SizeMeter[Int] =
-    SizeMeter(CodedOutputStream.computeRawVarint32Size _)
-
-  CodedOutputStream
-  implicit val string: SizeMeter[String] =
-    SizeMeter(CodedOutputStream.computeStringSizeNoTag _)
+  implicit val int: SizeMeter[Int] = SizeMeter(CodedOutputStream.computeRawVarint32Size _)
+  implicit val long: SizeMeter[Long] = SizeMeter(CodedOutputStream.computeRawVarint64Size _)
+  implicit val float: SizeMeter[Float] = SizeMeter(_ => LITTLE_ENDIAN_32_SIZE)
+  implicit val double: SizeMeter[Double] = SizeMeter(_ => LITTLE_ENDIAN_64_SIZE)
+  implicit val boolean: SizeMeter[Boolean] = SizeMeter(CodedOutputStream.computeBoolSizeNoTag _)
+  implicit val string: SizeMeter[String] = SizeMeter(CodedOutputStream.computeStringSizeNoTag _)
+  implicit def bytes[B](implicit bytes: Bytes[B]): SizeMeter[B] = SizeMeter(value => bytes.size(value).toInt)
 }

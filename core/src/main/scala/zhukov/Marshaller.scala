@@ -1,8 +1,6 @@
 package zhukov
 
-import java.nio.ByteBuffer
-
-import zhukov.protobuf.{CodedInputStream, CodedOutputStream}
+import zhukov.protobuf.CodedOutputStream
 
 sealed trait Marshaller[@specialized T] {
 
@@ -17,6 +15,15 @@ sealed trait Marshaller[@specialized T] {
 }
 
 object Marshaller {
+
+  def apply[T: Marshaller]: Marshaller[T] =
+    implicitly[Marshaller[T]]
+
+  def apply[T](f: (CodedOutputStream, T) => Unit): Marshaller[T] = new Marshaller[T] {
+    def write(stream: CodedOutputStream, value: T): Unit = f(stream, value)
+  }
+
+  // This types required to select wire type during derivation
 
   sealed trait VarintMarshaller[A] extends Marshaller[A] { self =>
     def contramap[B](f: B => A): VarintMarshaller[B] = new VarintMarshaller[B] {
@@ -46,18 +53,35 @@ object Marshaller {
     }
   }
 
-  def apply[T: Marshaller]: Marshaller[T] =
-    implicitly[Marshaller[T]]
-
-  def apply[T](f: (CodedOutputStream, T) => Unit): Marshaller[T] = new Marshaller[T] {
-    def write(stream: CodedOutputStream, value: T): Unit = f(stream, value)
-  }
-
-  // Primitives default instances
+  // Default instances
 
   implicit object IntMarshaller extends VarintMarshaller[Int] {
     def write(stream: CodedOutputStream, value: Int): Unit = {
       stream.writeRawVarint32(value)
+    }
+  }
+
+  implicit object LongMarshaller extends VarintMarshaller[Long] {
+    def write(stream: CodedOutputStream, value: Long): Unit = {
+      stream.writeRawVarint64(value)
+    }
+  }
+
+  implicit object FloatMarshaller extends Fixed32Marshaller[Float] {
+    def write(stream: CodedOutputStream, value: Float): Unit = {
+      stream.writeFixed32NoTag(java.lang.Float.floatToRawIntBits(value))
+    }
+  }
+
+  implicit object DoubleMarshaller extends Fixed64Marshaller[Double] {
+    def write(stream: CodedOutputStream, value: Double): Unit = {
+      stream.writeFixed64NoTag(java.lang.Double.doubleToRawLongBits(value))
+    }
+  }
+
+  implicit object BooleanMarshaller extends VarintMarshaller[Boolean] {
+    def write(stream: CodedOutputStream, value: Boolean): Unit = {
+      stream.writeBoolNoTag(value)
     }
   }
 
@@ -67,4 +91,9 @@ object Marshaller {
     }
   }
 
+  implicit def bytesMarshaller[B: Bytes]: CodedMarshaller[B] = new CodedMarshaller[B] {
+    def write(stream: CodedOutputStream, value: B): Unit = {
+      stream.writeBytesNoTag(value)
+    }
+  }
 }

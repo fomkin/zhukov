@@ -17,6 +17,11 @@ message MessageWithRepeatedString {
     repeated string myStrings = 2;
 }
 
+message WithBytes {
+    bytes myBytes = 1;
+    int64 myLong = 2;
+}
+
 message Lit {
   int32 value = 1;
 }
@@ -30,4 +35,10 @@ message Expr {
         Lit lit = 1;
         Add add = 2;
     }
+}
+
+message OtherTypes {
+    float f = 1;
+    double d = 2;
+    bool b = 3;
 }

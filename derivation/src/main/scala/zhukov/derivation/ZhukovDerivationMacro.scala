@@ -311,11 +311,9 @@ class ZhukovDerivationMacro(val c: blackbox.Context) {
   private def sealedTraitUnmarshaller(T: Type, ts: ClassSymbol): Tree = {
     val fields = resolveSealedTraitFields(T, ts)
     q"""
-      new zhukov.Unmarshaller[$T] {
-        def read(_stream: zhukov.protobuf.CodedInputStream) = {
-          ..${commonUnmarshaller(T, fields)}
-          _value
-        }
+      zhukov.Unmarshaller[$T] { (_stream: zhukov.protobuf.CodedInputStream) =>
+        ..${commonUnmarshaller(T, fields)}
+        _value
       }
     """
   }
@@ -352,11 +350,9 @@ class ZhukovDerivationMacro(val c: blackbox.Context) {
         q"$originalName = $varName"
     }
     q"""
-      new zhukov.Unmarshaller[$T] {
-        def read(_stream: zhukov.protobuf.CodedInputStream) = {
-          ..${commonUnmarshaller(T, fields)}
-          $module.apply(..$applyArgs)
-        }
+      zhukov.Unmarshaller[$T] { (_stream: zhukov.protobuf.CodedInputStream) =>
+        ..${commonUnmarshaller(T, fields)}
+        $module.apply(..$applyArgs)
       }
     """
   }
