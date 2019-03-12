@@ -352,15 +352,17 @@ class ZhukovDerivationMacro(val c: blackbox.Context) {
     val params = getOrAbort(constructor.paramLists.headOption, constructor.pos, "Case class should have parameters")
     params.zipWithIndex.map {
       case (param, i) =>
-        val defaultValue = TermName(s"apply$$default$$${i + 1}") // apply$default$1
-      val tpe = param.typeSignature
-        if (!module.typeSignature.decls.exists(_.name == defaultValue))
-          c.abort(param.pos, "Parameter should have default value")
+        val tpe = param.typeSignature
+        val default = {
+          val v = TermName(s"apply$$default$$${i + 1}") // apply$default$1
+          if (!module.typeSignature.decls.exists(_.name == v)) Some(q"zhukov.Default[$tpe].value")
+          else Some(q"$module.$v")
+        }
         Field(
           index = i + 1,
           originalName = Some(param.name.toTermName),
           varName = TermName("_" + param.name.toString),
-          default = Some(q"$module.$defaultValue"),
+          default = default,
           tpe = tpe,
           repTpe =
             if (tpe <:< typeOf[Iterable[_]] || tpe <:< typeOf[Option[_]]) Some(tpe.typeArgs.head)
