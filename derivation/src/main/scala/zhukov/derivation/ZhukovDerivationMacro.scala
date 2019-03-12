@@ -28,7 +28,8 @@ class ZhukovDerivationMacro(val c: blackbox.Context) {
       } else {
         c.abort(c.enclosingPosition, OnlyCaseClassesAndSealedTraitsSupported)
       }
-    unmarshallerCache.getOrElseUpdate(T, tree)
+    tree
+    //unmarshallerCache.getOrElseUpdate(T, tree)
   }
 
   def marshallerImpl[T: WeakTypeTag]: Tree = {
@@ -41,7 +42,8 @@ class ZhukovDerivationMacro(val c: blackbox.Context) {
       } else if (ts.isClass && ts.asClass.isTrait && ts.asClass.isSealed) {
         sealedTraitMarshaller(T, ts.asClass)
       } else c.abort(c.enclosingPosition, OnlyCaseClassesAndSealedTraitsSupported)
-    marshallerCache.getOrElseUpdate(T, tree)
+    tree
+    //marshallerCache.getOrElseUpdate(T, tree)
   }
 
   def sizeMeterImpl[T: WeakTypeTag]: Tree = {
@@ -54,7 +56,8 @@ class ZhukovDerivationMacro(val c: blackbox.Context) {
       } else if (ts.isClass && ts.asClass.isTrait && ts.asClass.isSealed) {
         sealedTraitSizeMeter(T, ts.asClass)
       } else c.abort(c.enclosingPosition, OnlyCaseClassesAndSealedTraitsSupported)
-    sizeMeterCache.getOrElseUpdate(T, tree)
+    tree
+    //sizeMeterCache.getOrElseUpdate(T, tree)
   }
 
   def unmarshallerLowPriorityImpl[T: WeakTypeTag]: Tree =
@@ -67,7 +70,7 @@ class ZhukovDerivationMacro(val c: blackbox.Context) {
     q"zhukov.derivation.LowPriority(${sizeMeterImpl[T]})"
 
   private def caseClassMarshaller(T: Type, module: Symbol) = {
-    val fields = resolveCaseClassFields(module)
+    val fields = resolveCaseClassFields(T, module)
     val writes = fields.map(commonMarshaller(T, _))
     q"""
       zhukov.Marshaller[$T] { (_stream: zhukov.protobuf.CodedOutputStream, _value: $T) =>
@@ -89,7 +92,7 @@ class ZhukovDerivationMacro(val c: blackbox.Context) {
   }
 
   private def caseClassSizeMeter(T: Type, module: Symbol) = {
-    val fields = resolveCaseClassFields(module)
+    val fields = resolveCaseClassFields(T, module)
     val meters = fields.map(commonSizeMeter)
     q"""
       zhukov.SizeMeter[$T] { (_value: $T) =>
@@ -136,6 +139,7 @@ class ZhukovDerivationMacro(val c: blackbox.Context) {
   }
 
   private def inferUnmarshallerWireType(tpe: c.universe.Type) = {
+    //T.typeArgs.map(_.erasure =:= typeOf[Object])
     if (c.typecheck(q"implicitly[zhukov.Unmarshaller.VarintUnmarshaller[$tpe]]", silent = true).tpe != NoType) VarInt
     else if (c.typecheck(q"implicitly[zhukov.Unmarshaller.Fixed32Unmarshaller[$tpe]]", silent = true).tpe != NoType) Fixed32
     else if (c.typecheck(q"implicitly[zhukov.Unmarshaller.Fixed64Unmarshaller[$tpe]]", silent = true).tpe != NoType) Fixed64
@@ -347,16 +351,18 @@ class ZhukovDerivationMacro(val c: blackbox.Context) {
     """
   }
 
-  private def resolveCaseClassFields(module: Symbol) = {
-    val constructor = module.typeSignature.decl(applyName).asMethod
-    val params = getOrAbort(constructor.paramLists.headOption, constructor.pos, "Case class should have parameters")
+  private def resolveCaseClassFields(T: Type, module: Symbol) = {
+    //val constructor = module.typeSignature.decl(applyName).asMethod
+    //val params = getOrAbort(constructor.paramLists.headOption, constructor.pos, "Case class should have parameters")
+    val params = T.decls.toList.collect { case m: MethodSymbol if m.isCaseAccessor => m }
     params.zipWithIndex.map {
       case (param, i) =>
-        val tpe = param.typeSignature
+//        val tpe = param.typeSignature
+        val NullaryMethodType(tpe) = param.typeSignatureIn(T)
         val default = {
           val v = TermName(s"apply$$default$$${i + 1}") // apply$default$1
           if (!module.typeSignature.decls.exists(_.name == v)) Some(q"zhukov.Default[$tpe].value")
-          else Some(q"$module.$v")
+          else Some(q"$module.$v: $tpe")
         }
         Field(
           index = i + 1,
@@ -374,7 +380,7 @@ class ZhukovDerivationMacro(val c: blackbox.Context) {
   }
 
   private def caseClassUnmarshaller(T: Type, module: Symbol): Tree = {
-    val fields = resolveCaseClassFields(module)
+    val fields = resolveCaseClassFields(T, module)
     val applyArgs = fields.collect {
       case Field(_, Some(originalName), varName, _, _, Some(_), _, false) =>
         q"$originalName = $varName.result()"

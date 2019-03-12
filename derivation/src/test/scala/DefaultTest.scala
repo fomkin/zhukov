@@ -10,10 +10,8 @@ object DefaultTest extends TestSuite {
   case class Foo(x: Int, y: Int = 10)
   case class FooOpt(x: Option[Int], y: Int = 10)
 
-  implicit val fooMarshaller = marshaller[Foo]
   implicit val fooUnmarshaller = unmarshaller[Foo]
   implicit val fooOptMarshaller = marshaller[FooOpt]
-  implicit val fooOptUnmarshaller = unmarshaller[FooOpt]
 
   val tests = Tests {
     'Default - {

@@ -2,7 +2,7 @@ package zhukov
 
 import zhukov.protobuf.CodedOutputStream
 
-sealed trait Marshaller[@specialized T] {
+sealed trait Marshaller[T] {
 
   def write(stream: CodedOutputStream, value: T): Unit
 
