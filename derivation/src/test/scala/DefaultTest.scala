@@ -1,11 +1,9 @@
-import utest.TestSuite
+import minitest.SimpleTestSuite
 import zhukov.{Default, Marshaller, Unmarshaller}
 import zhukov.derivation._
 import zhukov.Default.auto._
 
-object DefaultTest extends TestSuite {
-
-  import utest._
+object DefaultTest extends SimpleTestSuite {
 
   case class Foo(x: Int, y: Int = 10)
   case class FooOpt(x: Option[Int], y: Int = 10)
@@ -13,11 +11,9 @@ object DefaultTest extends TestSuite {
   implicit val fooUnmarshaller = unmarshaller[Foo]
   implicit val fooOptMarshaller = marshaller[FooOpt]
 
-  val tests = Tests {
-    'Default - {
-      val bytes = Marshaller[FooOpt].write(FooOpt(None))
-      val result = Unmarshaller[Foo].read(bytes)
-      assert(result == Foo(0, 10))
-    }
+  test("Default") {
+    val bytes = Marshaller[FooOpt].write(FooOpt(None))
+    val result = Unmarshaller[Foo].read(bytes)
+    assert(result == Foo(0, 10))
   }
 }

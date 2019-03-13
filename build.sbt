@@ -47,12 +47,12 @@ lazy val derivation = project
   .settings(Project.inConfig(Test)(sbtprotoc.ProtocPlugin.protobufConfigSettings):_*)
   .settings(
     name := "zhukov-derivation",
-    testFrameworks += new TestFramework("utest.runner.Framework"),
+    testFrameworks += new TestFramework("minitest.runner.Framework"),
     PB.targets in Test := Seq(scalapb.gen() -> (sourceManaged in Test).value),
     PB.targets in Compile := Nil,
     PB.protoSources in Test := Seq(file("derivation/src/test/protobuf")),
     libraryDependencies := Seq(
-      scalaPb % Test, utest, // testing
+      scalaPb % Test, minitest, // testing
       macroCompat, macroParadise, scalaCompiler(scalaVersion.value) // macros
     )
   )
