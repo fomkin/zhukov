@@ -263,8 +263,16 @@ class ZhukovDerivationMacro(val c: blackbox.Context) {
     case _ => EmptyTree
   }
 
+  private val mapSymbol = c.typecheck(tq"Map[_, _]")
+    .tpe
+    .typeSymbol
+
   private def commonUnmarshaller(T: Type, fields: List[Field]): Tree = {
     val vars = fields.groupBy(_.varName).mapValues(_.head).collect {
+      case (name, Field(_, _, _, Some(default), repTpe, Some(tpe), None, false)) if repTpe.typeSymbol == mapSymbol =>
+        val t1 = tpe.typeArgs.head
+        val t2 = tpe.typeArgs.last
+        q"var $name = ${repTpe.typeSymbol.companion}.newBuilder[$t1, $t2] ++= $default"
       case (name, Field(_, _, _, Some(default), repTpe, Some(tpe), None, false)) =>
         q"var $name = ${repTpe.typeSymbol.companion}.newBuilder[$tpe] ++= $default"
       case (name, Field(_, _, _, Some(default), repTpe, Some(_), None, true)) =>
@@ -359,6 +367,7 @@ class ZhukovDerivationMacro(val c: blackbox.Context) {
       case (param, i) =>
 //        val tpe = param.typeSignature
         val NullaryMethodType(tpe) = param.typeSignatureIn(T)
+        val iterableType = typeOf[Iterable[_]]
         val default = {
           val v = TermName(s"apply$$default$$${i + 1}") // apply$default$1
           if (!module.typeSignature.decls.exists(_.name == v)) Some(q"zhukov.Default[$tpe].value")
@@ -371,7 +380,12 @@ class ZhukovDerivationMacro(val c: blackbox.Context) {
           default = default,
           tpe = tpe,
           repTpe =
-            if (tpe <:< typeOf[Iterable[_]] || tpe <:< typeOf[Option[_]]) Some(tpe.typeArgs.head)
+            if (tpe <:< iterableType) { // Map[K, V] <:< Iterable[(K, V)]
+              val xs = tpe.typeArgs
+              if (xs.length > 1) Some(tpe.baseType(iterableType.typeSymbol).typeArgs.head)
+              //if (xs.length > 1) Some(c.typecheck(q"var ___x: (..$xs) = null; ___x").tpe)
+              else Some(xs.head)
+            } else if (tpe <:< typeOf[Option[_]]) Some(tpe.typeArgs.head)
             else None,
           baseSealedTrait = None,
           isOption = tpe <:< typeOf[Option[_]]
