@@ -3,7 +3,9 @@ package zhukov
 import zhukov.protobuf.CodedOutputStream
 import zhukov.protobuf.CodedOutputStream.{LITTLE_ENDIAN_32_SIZE, LITTLE_ENDIAN_64_SIZE}
 
-sealed trait SizeMeter[T] {
+import scala.languageFeature.higherKinds
+
+sealed trait SizeMeter[T] { self =>
 
   def measureValues(values: Iterable[T]): Int = {
     var size = 0
@@ -14,6 +16,10 @@ sealed trait SizeMeter[T] {
   }
 
   def measure(value: T): Int
+
+  def contramap[U](f: U => T): SizeMeter[U] = new SizeMeter[U] {
+    def measure(value: U): Int = self.measure(f(value))
+  }
 }
 
 object SizeMeter {
@@ -31,5 +37,6 @@ object SizeMeter {
   implicit val boolean: SizeMeter[Boolean] = SizeMeter(CodedOutputStream.computeBoolSizeNoTag _)
   implicit val string: SizeMeter[String] = SizeMeter(CodedOutputStream.computeStringSizeNoTag _)
   implicit def bytes[B](implicit bytes: Bytes[B]): SizeMeter[B] = SizeMeter(value => bytes.size(value).toInt)
-  implicit def option[T](implicit sm: SizeMeter[T]): SizeMeter[Option[T]] = SizeMeter(xs => sm.measureValues(xs))
+  implicit def iterable[A, Col[_] <: Iterable[A]](implicit sm: SizeMeter[A]): SizeMeter[Col[A]] =
+    SizeMeter(xs => sm.measureValues(xs.toIterable))
 }

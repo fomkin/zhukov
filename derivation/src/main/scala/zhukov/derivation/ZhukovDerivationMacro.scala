@@ -26,7 +26,7 @@ class ZhukovDerivationMacro(val c: blackbox.Context) {
       } else if (ts.isClass && ts.asClass.isTrait && ts.asClass.isSealed) {
         sealedTraitUnmarshaller(T, ts.asClass)
       } else {
-        c.abort(c.enclosingPosition, OnlyCaseClassesAndSealedTraitsSupported)
+        c.abort(c.enclosingPosition, onlyCaseClassesAndSealedTraitsSupported(show(T)))
       }
     tree
     //unmarshallerCache.getOrElseUpdate(T, tree)
@@ -41,7 +41,7 @@ class ZhukovDerivationMacro(val c: blackbox.Context) {
         caseClassMarshaller(T, companion)
       } else if (ts.isClass && ts.asClass.isTrait && ts.asClass.isSealed) {
         sealedTraitMarshaller(T, ts.asClass)
-      } else c.abort(c.enclosingPosition, OnlyCaseClassesAndSealedTraitsSupported)
+      } else c.abort(c.enclosingPosition, onlyCaseClassesAndSealedTraitsSupported(show(T)))
     tree
     //marshallerCache.getOrElseUpdate(T, tree)
   }
@@ -269,12 +269,8 @@ class ZhukovDerivationMacro(val c: blackbox.Context) {
 
   private def commonUnmarshaller(T: Type, fields: List[Field]): Tree = {
     val vars = fields.groupBy(_.varName).mapValues(_.head).collect {
-      case (name, Field(_, _, _, Some(default), repTpe, Some(tpe), None, false)) if repTpe.typeSymbol == mapSymbol =>
-        val t1 = tpe.typeArgs.head
-        val t2 = tpe.typeArgs.last
-        q"var $name = ${repTpe.typeSymbol.companion}.newBuilder[$t1, $t2] ++= $default"
       case (name, Field(_, _, _, Some(default), repTpe, Some(tpe), None, false)) =>
-        q"var $name = ${repTpe.typeSymbol.companion}.newBuilder[$tpe] ++= $default"
+        q"var $name = ${repTpe.typeSymbol.companion}.newBuilder[..${tpe.typeArgs}] ++= $default"
       case (name, Field(_, _, _, Some(default), repTpe, Some(_), None, true)) =>
         q"var $name:$repTpe = $default"
       case (name, Field(_, _, _, Some(default), _, None, None, _)) =>
@@ -411,8 +407,8 @@ class ZhukovDerivationMacro(val c: blackbox.Context) {
     """
   }
 
-  private val OnlyCaseClassesAndSealedTraitsSupported =
-    "Zhukov derivation is supported only for case classes and sealed traits"
+  private def onlyCaseClassesAndSealedTraitsSupported(typeName: String) =
+    s"Unable to derive $typeName: Zhukov derivation supports only case classes and sealed traits"
 
   private val applyName = TermName("apply")
 
