@@ -11,6 +11,7 @@ import scala.reflect.macros.blackbox
 class ZhukovDerivationMacro(val c: blackbox.Context) {
 
   import c.universe._
+  import WireType._
 
   private val marshallerCache = TrieMap.empty[Type, Tree]
   private val unmarshallerCache = TrieMap.empty[Type, Tree]
@@ -28,8 +29,7 @@ class ZhukovDerivationMacro(val c: blackbox.Context) {
       } else {
         c.abort(c.enclosingPosition, onlyCaseClassesAndSealedTraitsSupported(show(T)))
       }
-    tree
-    //unmarshallerCache.getOrElseUpdate(T, tree)
+    unmarshallerCache.getOrElseUpdate(T, tree)
   }
 
   def marshallerImpl[T: WeakTypeTag]: Tree = {
@@ -42,8 +42,7 @@ class ZhukovDerivationMacro(val c: blackbox.Context) {
       } else if (ts.isClass && ts.asClass.isTrait && ts.asClass.isSealed) {
         sealedTraitMarshaller(T, ts.asClass)
       } else c.abort(c.enclosingPosition, onlyCaseClassesAndSealedTraitsSupported(show(T)))
-    tree
-    //marshallerCache.getOrElseUpdate(T, tree)
+    marshallerCache.getOrElseUpdate(T, tree)
   }
 
   def sizeMeterImpl[T: WeakTypeTag]: Tree = {
@@ -55,9 +54,8 @@ class ZhukovDerivationMacro(val c: blackbox.Context) {
         caseClassSizeMeter(T, companion)
       } else if (ts.isClass && ts.asClass.isTrait && ts.asClass.isSealed) {
         sealedTraitSizeMeter(T, ts.asClass)
-      } else c.abort(c.enclosingPosition, OnlyCaseClassesAndSealedTraitsSupported)
-    tree
-    //sizeMeterCache.getOrElseUpdate(T, tree)
+      } else c.abort(c.enclosingPosition, onlyCaseClassesAndSealedTraitsSupported(show(T)))
+    sizeMeterCache.getOrElseUpdate(T, tree)
   }
 
   def unmarshallerLowPriorityImpl[T: WeakTypeTag]: Tree =
@@ -399,10 +397,18 @@ class ZhukovDerivationMacro(val c: blackbox.Context) {
       case Field(_, Some(originalName), varName, _, _, _, _, true) =>
         q"$originalName = $varName"
     }
+    val applyArgsInvoke =
+      if (module.typeSignature.decls.exists(_.name == applyName)) q"$module.apply(..$applyArgs)"
+      else {
+        Ident(T.typeSymbol.asInstanceOf[scala.reflect.internal.Symbols#Symbol
+          ].sourceModule.asInstanceOf[Symbol]
+        )
+      }
+
     q"""
       zhukov.Unmarshaller[$T] { (_stream: zhukov.protobuf.CodedInputStream) =>
         ..${commonUnmarshaller(T, fields)}
-        $module.apply(..$applyArgs)
+        $applyArgsInvoke
       }
     """
   }
@@ -414,15 +420,13 @@ class ZhukovDerivationMacro(val c: blackbox.Context) {
 
   private sealed abstract class WireType(val value: Int)
 
-  private case object VarInt extends WireType(WireFormat.WIRETYPE_VARINT)
-
-  private case object Fixed64 extends WireType(WireFormat.WIRETYPE_FIXED64)
-
-  private case object Fixed32 extends WireType(WireFormat.WIRETYPE_FIXED32)
-
-  private case object Coded extends WireType(WireFormat.WIRETYPE_LENGTH_DELIMITED)
-
-  private case object LengthDelimited extends WireType(WireFormat.WIRETYPE_LENGTH_DELIMITED)
+  private object WireType {
+    case object VarInt extends WireType(WireFormat.WIRETYPE_VARINT)
+    case object Fixed64 extends WireType(WireFormat.WIRETYPE_FIXED64)
+    case object Fixed32 extends WireType(WireFormat.WIRETYPE_FIXED32)
+    case object Coded extends WireType(WireFormat.WIRETYPE_LENGTH_DELIMITED)
+    case object LengthDelimited extends WireType(WireFormat.WIRETYPE_LENGTH_DELIMITED)
+  }
 
   private final case class Field(index: Int,
                                  originalName: Option[TermName],
