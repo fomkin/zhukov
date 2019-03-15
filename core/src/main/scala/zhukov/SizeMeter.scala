@@ -36,7 +36,11 @@ object SizeMeter {
   implicit val double: SizeMeter[Double] = SizeMeter(_ => LITTLE_ENDIAN_64_SIZE)
   implicit val boolean: SizeMeter[Boolean] = SizeMeter(CodedOutputStream.computeBoolSizeNoTag _)
   implicit val string: SizeMeter[String] = SizeMeter(CodedOutputStream.computeStringSizeNoTag _)
-  implicit def bytes[B](implicit bytes: Bytes[B]): SizeMeter[B] = SizeMeter(value => bytes.size(value).toInt)
+  implicit def bytes[B](implicit bytes: Bytes[B]): SizeMeter[B] = SizeMeter(value => {
+    val len = bytes.size(value).toInt
+    CodedOutputStream.computeRawVarint32Size(len) + len
+  })
+
   implicit def iterable[A, Col[_] <: Iterable[A]](implicit sm: SizeMeter[A]): SizeMeter[Col[A]] =
     SizeMeter(xs => sm.measureValues(xs.toIterable))
 }
