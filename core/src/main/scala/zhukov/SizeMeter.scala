@@ -7,13 +7,7 @@ import scala.languageFeature.higherKinds
 
 sealed trait SizeMeter[T] { self =>
 
-  def measureValues(values: Iterable[T]): Int = {
-    var size = 0
-    val iterator = values.iterator
-    while (iterator.hasNext)
-      size += measure(iterator.next())
-    size
-  }
+  def measureValues(values: Iterable[T]): Int = values.foldLeft(0)((acc, v) => acc + measure(v))
 
   def measure(value: T): Int
 
