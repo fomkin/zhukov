@@ -114,7 +114,7 @@ class ZhukovDerivationMacro(val c: blackbox.Context) {
   }
 
   private def resolveSealedTraitFields(T: Type, ts: ClassSymbol) = {
-    val children = ts.knownDirectSubclasses.toList
+    val children = ts.knownDirectSubclasses.toList.sortBy(_.asClass.fullName)
     val termName = TermName("_value")
     children.zipWithIndex.map {
       case (x, i) =>
