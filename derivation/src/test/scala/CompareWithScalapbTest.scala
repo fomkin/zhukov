@@ -5,7 +5,8 @@ import com.google.protobuf.ByteString
 import minitest.SimpleTestSuite
 import zhukov.derivation.{marshaller, sizeMeter, unmarshaller}
 import zhukov.messages._
-import zhukov.{Bytes, Marshaller, SizeMeter, Unmarshaller}
+import zhukov.{Bytes, Default, Marshaller, SizeMeter, Unmarshaller}
+import zhukov.Default.auto._
 
 object CompareWithScalapbTest extends SimpleTestSuite {
 
@@ -53,6 +54,22 @@ object CompareWithScalapbTest extends SimpleTestSuite {
       unmarshaller[OtherTypes2]
     implicit val m: Marshaller[OtherTypes2] =
       marshaller[OtherTypes2]
+  }
+
+  case class MessageWithVarIntOption1(maybeNumber: Option[Long])
+
+  object MessageWithVarIntOption1 {
+    implicit val m = marshaller[MessageWithVarIntOption1]
+    implicit val u = unmarshaller[MessageWithVarIntOption1]
+    implicit val s = sizeMeter[MessageWithVarIntOption1]
+    implicit val d = Default[MessageWithVarIntOption1](MessageWithVarIntOption1(Some(0L)))
+  }
+
+  case class WrapperForMessageWithVarIntOption1(m: MessageWithVarIntOption1)
+
+  object WrapperForMessageWithVarIntOption1 {
+    implicit val m = marshaller[WrapperForMessageWithVarIntOption1]
+    implicit val u = unmarshaller[WrapperForMessageWithVarIntOption1]
   }
 
   sealed trait Expr2
@@ -287,5 +304,13 @@ object CompareWithScalapbTest extends SimpleTestSuite {
     assert(message.f == message2.f)
     assert(message.d == message2.d)
     assert(message.b == message2.b)
+  }
+
+  test("Sizemeter for the messages which contain the option of varint field") {
+    val m1 = MessageWithVarIntOption1(Some(10L))
+    val message = WrapperForMessageWithVarIntOption1(m1)
+    val bytes = Marshaller[WrapperForMessageWithVarIntOption1].write(message)
+    val res = Unmarshaller[WrapperForMessageWithVarIntOption1].read(bytes)
+    assert(message == res)
   }
 }
