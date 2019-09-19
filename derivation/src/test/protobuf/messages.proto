@@ -32,8 +32,8 @@ message Add {
 }
 message Expr {
     oneof value {
-        Lit lit = 1;
-        Add add = 2;
+        Add add = 1;
+        Lit lit = 2;
     }
 }
 
