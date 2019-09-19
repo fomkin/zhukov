@@ -154,14 +154,13 @@ class ZhukovDerivationMacro(val c: blackbox.Context) {
   }
 
   private def commonSizeMeter(x: Field): Tree = x match {
-    case Field(i, nameOpt, _, _, _, Some(tpe), _, _) =>
+    case Field(i, nameOpt, _, _, _, Some(tpe), _, false) =>
       val name = nameOpt.fold[Tree](Ident(TermName("_v")))(s => q"_value.$s")
       inferMarshallerWireType(tpe) match {
         case VarInt | Fixed32 | Fixed64 => // Packed
           q"""
             val _s = implicitly[zhukov.SizeMeter[$tpe]].measureValues($name)
             _size += ${CodedOutputStream.computeTagSize(i)}
-            _size += zhukov.protobuf.CodedOutputStream.computeRawVarint32Size(_s)
             _size += _s
           """
         case Coded =>
@@ -184,9 +183,8 @@ class ZhukovDerivationMacro(val c: blackbox.Context) {
               }
             """
       }
-    case Field(i, nameOpt, _, _, tpe, _, _, _) =>
-      val name = nameOpt.fold[Tree](Ident(TermName("_v")))(s => q"_value.$s")
-      inferMarshallerWireType(tpe) match {
+    case Field(i, nameOpt, _, _, tpe, maybeRepTpe, _, isOption) =>
+      def writer(tpe: Type, name: Tree) = inferMarshallerWireType(tpe) match {
         case LengthDelimited =>
           q"""
             val _s = implicitly[zhukov.SizeMeter[$tpe]].measure($name)
@@ -194,14 +192,22 @@ class ZhukovDerivationMacro(val c: blackbox.Context) {
             _size += zhukov.protobuf.CodedOutputStream.computeRawVarint32Size(_s)
             _size += _s
           """
-        case _ =>
+        case wireType =>
           q"""
             _size += ${CodedOutputStream.computeTagSize(i)}
             _size += implicitly[zhukov.SizeMeter[$tpe]].measure($name)
           """
       }
-    case _ =>
-      EmptyTree
+      val name = nameOpt.fold[Tree](Ident(TermName("_v")))(s => q"_value.$s")
+      if (isOption) {
+        q"""
+          $name match {
+            case Some(__extracted) => ${writer(maybeRepTpe.get, Ident(TermName("__extracted")))}
+            case None => ()
+          }
+        """
+      } else writer(tpe, name)
+    case _ => EmptyTree
   }
 
   private def commonMarshaller(T: Type, x: Field): Tree = x match {
