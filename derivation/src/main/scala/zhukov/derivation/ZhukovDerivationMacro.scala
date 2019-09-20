@@ -16,6 +16,7 @@ class ZhukovDerivationMacro(val c: blackbox.Context) {
   private val marshallerCache = TrieMap.empty[Type, Tree]
   private val unmarshallerCache = TrieMap.empty[Type, Tree]
   private val sizeMeterCache = TrieMap.empty[Type, Tree]
+  private val iterableType = typeOf[Iterable[_]]
 
   def unmarshallerImpl[T: WeakTypeTag]: Tree = {
     val T = weakTypeTag[T].tpe
@@ -210,13 +211,12 @@ class ZhukovDerivationMacro(val c: blackbox.Context) {
     case _ => EmptyTree
   }
 
-  private def commonMarshaller(T: Type, x: Field): Tree = x match {
-    case Field(i, nameOpt, _, _, _, Some(tpe), _, false) =>
-      val name = nameOpt.fold[Tree](Ident(TermName("_v")))(s => q"_value.$s")
+  private def commonMarshaller(T: Type, x: Field): Tree = {
+    def writer0(tpe: Type, indexField: Int, name: Tree) = {
       inferMarshallerWireType(tpe) match {
         case VarInt | Fixed32 | Fixed64 => // Packed
           q"""
-            _stream.writeTag($i, ${WireFormat.WIRETYPE_LENGTH_DELIMITED})
+            _stream.writeTag($indexField, ${WireFormat.WIRETYPE_LENGTH_DELIMITED})
             _stream.writeRawVarint32(implicitly[zhukov.SizeMeter[$tpe]].measureValues($name))
             val _i = $name.iterator
             while (_i.hasNext)
@@ -226,7 +226,7 @@ class ZhukovDerivationMacro(val c: blackbox.Context) {
           q"""
             val _i = $name.iterator
             while (_i.hasNext) {
-              _stream.writeTag($i, ${WireFormat.WIRETYPE_LENGTH_DELIMITED})
+              _stream.writeTag($indexField, ${WireFormat.WIRETYPE_LENGTH_DELIMITED})
               implicitly[zhukov.Marshaller[$tpe]].write(_stream, _i.next())
             }
           """
@@ -235,36 +235,53 @@ class ZhukovDerivationMacro(val c: blackbox.Context) {
             val _i = $name.iterator
             while (_i.hasNext) {
               val _v = _i.next()
-              _stream.writeTag($i, ${WireFormat.WIRETYPE_LENGTH_DELIMITED})
+              _stream.writeTag($indexField, ${WireFormat.WIRETYPE_LENGTH_DELIMITED})
               _stream.writeRawVarint32(implicitly[zhukov.SizeMeter[$tpe]].measure(_v))
               implicitly[zhukov.Marshaller[$tpe]].write(_stream, _v)
             }
           """
       }
-    case Field(i, nameOpt, _, _, tpe, maybeRepTpe, _, isOption) =>
-      def writer(tpe: Type, name: Tree) = inferMarshallerWireType(tpe) match {
-        case LengthDelimited =>
-          q"""
-            _stream.writeTag($i, ${WireFormat.WIRETYPE_LENGTH_DELIMITED})
+    }
+    def writer(tpe: Type, indexField: Int, name: Tree) = inferMarshallerWireType(tpe) match {
+      case LengthDelimited =>
+        q"""
+            _stream.writeTag($indexField, ${WireFormat.WIRETYPE_LENGTH_DELIMITED})
             _stream.writeRawVarint32(implicitly[zhukov.SizeMeter[$tpe]].measure($name))
             implicitly[zhukov.Marshaller[$tpe]].write(_stream, $name)
           """
-        case wireType =>
-          q"""
-            _stream.writeTag($i, ${wireType.value})
+      case wireType =>
+        q"""
+            _stream.writeTag($indexField, ${wireType.value})
             implicitly[zhukov.Marshaller[$tpe]].write(_stream, $name)
           """
-      }
-      val name = nameOpt.fold[Tree](Ident(TermName("_v")))(s => q"_value.$s")
-      if (isOption) {
+    }
+
+    x match {
+      case Field(i, nameOpt, _, _, tpe, Some(repTpe), _, true) if repTpe <:< iterableType =>
+        val concreteType = repTpe.typeArgs.head
+        val name = nameOpt.fold[Tree](Ident(TermName("_v")))(s => q"_value.$s")
+
         q"""
           $name match {
-            case Some(__extracted) => ${writer(maybeRepTpe.get, Ident(TermName("__extracted")))}
+            case Some(__extracted) => ${writer0(concreteType, i, Ident(TermName("__extracted")))}
             case None => ()
           }
         """
-      } else writer(tpe, name)
-    case _ => EmptyTree
+      case Field(i, nameOpt, _, _, _, Some(repTpe), _, false) =>
+        val name = nameOpt.fold[Tree](Ident(TermName("_v")))(s => q"_value.$s")
+        writer0(repTpe, i, name)
+      case Field(i, nameOpt, _, _, tpe, maybeRepTpe, _, isOption) =>
+        val name = nameOpt.fold[Tree](Ident(TermName("_v")))(s => q"_value.$s")
+        if (isOption && maybeRepTpe.isDefined) {
+          q"""
+          $name match {
+            case Some(__extracted) => ${writer(maybeRepTpe.get, i, Ident(TermName("__extracted")))}
+            case None => ()
+          }
+        """
+        } else writer(tpe, i, name)
+      case _ => EmptyTree
+    }
   }
 
   private val mapSymbol = c.typecheck(tq"Map[_, _]")
@@ -272,11 +289,43 @@ class ZhukovDerivationMacro(val c: blackbox.Context) {
     .typeSymbol
 
   private def commonUnmarshaller(T: Type, fields: List[Field]): Tree = {
+    def writer(tpe: Type, indexField: Int, name: TermName): List[Tree] = {
+      val wireType = inferUnmarshallerWireType(tpe)
+      val tag = WireFormat.makeTag(indexField, wireType.value)
+      val singleRead = q"implicitly[zhukov.Unmarshaller[$tpe]].read(_stream)"
+      wireType match {
+        case VarInt | Fixed32 | Fixed64 => // Packed
+          val repTag = WireFormat.makeTag(indexField, WireFormat.WIRETYPE_LENGTH_DELIMITED)
+          val `case` =
+            cq"""
+                $repTag =>
+                  val _length = _stream.readRawVarint32()
+                  val _oldLimit = _stream.pushLimit(_length)
+                  while (_stream.getBytesUntilLimit > 0)
+                    $name += $singleRead
+                  _stream.popLimit(_oldLimit)
+            """
+          List(`case`, cq"$tag => $name += $singleRead")
+        case Coded =>
+          List(cq"$tag => $name += $singleRead")
+        case LengthDelimited =>
+          List(
+            cq"""$tag =>
+              val _length = _stream.readRawVarint32()
+              val _oldLimit = _stream.pushLimit(_length)
+              $name += $singleRead
+              _stream.checkLastTagWas(0)
+              _stream.popLimit(_oldLimit)
+            """)
+      }
+    }
     val vars = fields.groupBy(_.varName).mapValues(_.head).collect {
       case (name, Field(_, _, _, Some(default), repTpe, Some(tpe), None, false)) =>
         q"var $name = ${repTpe.typeSymbol.companion}.newBuilder[..${tpe.typeArgs}] ++= $default"
-      case (name, Field(_, _, _, Some(default), repTpe, Some(_), None, true)) =>
-        q"var $name:$repTpe = $default"
+      case (name, Field(_, _, _, Some(_), _, Some(repTpe), None, true)) if (repTpe <:< iterableType) =>
+        q"var $name = ${repTpe.typeSymbol.companion}.newBuilder[..${repTpe.typeArgs}]"
+      case (name, Field(_, _, _, Some(default), tpe, Some(_), None, true)) =>
+        q"var $name:$tpe = $default"
       case (name, Field(_, _, _, Some(default), _, None, None, _)) =>
         q"var $name = $default"
       case (name, Field(_, _, _, None, _, None, Some(parent), _)) =>
@@ -284,17 +333,23 @@ class ZhukovDerivationMacro(val c: blackbox.Context) {
     }
     val cases = fields.flatMap { x =>
       val tpe = x.repTpe.getOrElse(x.tpe)
-      val wireType = inferUnmarshallerWireType(tpe)
-      val tag = WireFormat.makeTag(x.index, wireType.value)
-      val singleRead = q"implicitly[zhukov.Unmarshaller[$tpe]].read(_stream)"
-      if (x.repTpe.isEmpty || x.isOption) {
-        val read =
-          if (x.isOption) q"Some($singleRead)"
-          else singleRead
-        wireType match {
-          case LengthDelimited =>
-            List(
-              cq"""
+
+      if (tpe <:< iterableType) {
+        val concreteType = tpe.typeArgs.head
+        writer(concreteType, x.index, x.varName)
+      } else {
+
+        val wireType = inferUnmarshallerWireType(tpe)
+        val tag = WireFormat.makeTag(x.index, wireType.value)
+        val singleRead = q"implicitly[zhukov.Unmarshaller[$tpe]].read(_stream)"
+        if (x.repTpe.isEmpty || x.isOption) {
+          val read =
+            if (x.isOption) q"Some($singleRead)"
+            else singleRead
+          wireType match {
+            case LengthDelimited =>
+              List(
+                cq"""
                 $tag =>
                   val _length = _stream.readRawVarint32()
                   val _oldLimit = _stream.pushLimit(_length)
@@ -302,35 +357,12 @@ class ZhukovDerivationMacro(val c: blackbox.Context) {
                   _stream.checkLastTagWas(0)
                   _stream.popLimit(_oldLimit)
               """
-            )
-          case _ =>
-            List(cq"$tag => ${x.varName} = $read")
-        }
-      } else {
-        wireType match {
-          case VarInt | Fixed32 | Fixed64 => // Packed
-            val repTag = WireFormat.makeTag(x.index, WireFormat.WIRETYPE_LENGTH_DELIMITED)
-            val `case` =
-              cq"""
-                $repTag =>
-                  val _length = _stream.readRawVarint32()
-                  val _oldLimit = _stream.pushLimit(_length)
-                  while (_stream.getBytesUntilLimit > 0)
-                    ${x.varName} += $singleRead
-                  _stream.popLimit(_oldLimit)
-            """
-            List(`case`, cq"$tag => ${x.varName} += $singleRead")
-          case Coded =>
-            List(cq"$tag => ${x.varName} += $singleRead")
-          case LengthDelimited =>
-            List(
-              cq"""$tag =>
-              val _length = _stream.readRawVarint32()
-              val _oldLimit = _stream.pushLimit(_length)
-              ${x.varName} += $singleRead
-              _stream.checkLastTagWas(0)
-              _stream.popLimit(_oldLimit)
-            """)
+              )
+            case _ =>
+              List(cq"$tag => ${x.varName} = $read")
+          }
+        } else {
+          writer(tpe, x.index, x.varName)
         }
       }
     }
@@ -400,6 +432,10 @@ class ZhukovDerivationMacro(val c: blackbox.Context) {
         q"$originalName = $varName.result()"
       case Field(_, Some(originalName), varName, _, _, None, _, false) =>
         q"$originalName = $varName"
+      case Field(_, Some(originalName), varName, _, _, Some(repTpe), _, true) if (repTpe <:< iterableType) =>
+        q"$originalName = if ($varName.result().isEmpty) None else Some($varName.result())"
+      case Field(_, Some(originalName), varName, _, _, Some(_), _, true) =>
+          q"$originalName = $varName"
       case Field(_, Some(originalName), varName, _, _, _, _, true) =>
         q"$originalName = $varName"
     }

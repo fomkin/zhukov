@@ -72,6 +72,27 @@ object CompareWithScalapbTest extends SimpleTestSuite {
     implicit val u = unmarshaller[WrapperForMessageWithVarIntOption1]
   }
 
+  case class MessageWithLengthDelimOption(maybeSeq: Option[Seq[Int]] = None)
+  object MessageWithLengthDelimOption {
+    implicit val m = marshaller[MessageWithLengthDelimOption]
+    implicit val u = unmarshaller[MessageWithLengthDelimOption]
+    implicit val s = sizeMeter[MessageWithLengthDelimOption]
+    implicit val d = Default[MessageWithLengthDelimOption](MessageWithLengthDelimOption(Some(Seq.empty)))
+  }
+
+  case class WrapperForMessageWithLengthDelimOption(m: MessageWithLengthDelimOption)
+
+  object WrapperForMessageWithLengthDelimOption {
+    implicit val m = marshaller[WrapperForMessageWithLengthDelimOption]
+    implicit val u = unmarshaller[WrapperForMessageWithLengthDelimOption]
+  }
+
+  case class CompositeMessage(msg: Option[Seq[MessageWithLengthDelimOption]])
+  object CompositeMessage {
+    implicit val m = marshaller[CompositeMessage]
+    implicit val u = unmarshaller[CompositeMessage]
+  }
+
   sealed trait Expr2
 
   object Expr2 {
@@ -311,6 +332,31 @@ object CompareWithScalapbTest extends SimpleTestSuite {
     val message = WrapperForMessageWithVarIntOption1(m1)
     val bytes = Marshaller[WrapperForMessageWithVarIntOption1].write(message)
     val res = Unmarshaller[WrapperForMessageWithVarIntOption1].read(bytes)
+    assert(message == res)
+  }
+
+  test("Messages which contain some value as the option of sequence of elements") {
+    val m1 = MessageWithLengthDelimOption(Some(Seq(1,2,3)))
+    val message = WrapperForMessageWithLengthDelimOption(m1)
+    val bytes = Marshaller[WrapperForMessageWithLengthDelimOption].write(message)
+    val res = Unmarshaller[WrapperForMessageWithLengthDelimOption].read(bytes)
+    assert(message == res)
+  }
+
+  test("Messages which contain None value as the option of sequence of elements") {
+    val m1 = MessageWithLengthDelimOption(None)
+    val message = WrapperForMessageWithLengthDelimOption(m1)
+    val bytes = Marshaller[WrapperForMessageWithLengthDelimOption].write(message)
+    val res = Unmarshaller[WrapperForMessageWithLengthDelimOption].read(bytes)
+    assert(message == res)
+  }
+
+  test("Composite message") {
+    val m1 = MessageWithLengthDelimOption(None)
+    val m2 = MessageWithLengthDelimOption(Some(Seq(1,2,3)))
+    val message = CompositeMessage(Some(Seq(m1, m2)))
+    val bytes = Marshaller[CompositeMessage].write(message)
+    val res = Unmarshaller[CompositeMessage].read(bytes)
     assert(message == res)
   }
 }

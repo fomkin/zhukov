@@ -41,6 +41,6 @@ object SizeMeter {
     CodedOutputStream.computeRawVarint32Size(len) + len
   })
 
-  implicit def iterable[A, Col[_] <: Iterable[A]](implicit sm: SizeMeter[A]): SizeMeter[Col[A]] =
+  implicit def iterable[A, Col[A] <: Iterable[A]](implicit sm: SizeMeter[A]): SizeMeter[Col[A]] =
     SizeMeter(xs => sm.measureValues(xs.toIterable))
 }
